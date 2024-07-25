@@ -48,6 +48,7 @@ func (t TransportProxy) handleConnection(conn net.Conn, target string) {
 	targetConn, err := net.Dial(t.network, target)
 	if err != nil {
 		klog.Errorf("failed to dial target: %v", err)
+		return
 	}
 
 	if err := pipe(conn, targetConn); err != nil {
