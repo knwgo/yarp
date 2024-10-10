@@ -9,7 +9,7 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/kaynAw/yarp/config"
+	"github.com/knwgo/yarp/config"
 )
 
 type HTTPSProxy struct {

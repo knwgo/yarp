@@ -7,8 +7,8 @@ import (
 	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 
-	"github.com/kaynAw/yarp/config"
-	"github.com/kaynAw/yarp/protocol"
+	"github.com/knwgo/yarp/config"
+	"github.com/knwgo/yarp/protocol"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/kaynAw/yarp
+module github.com/knwgo/yarp
 
 go 1.22.3
 

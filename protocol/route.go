@@ -8,7 +8,7 @@ import (
 
 	"k8s.io/klog/v2"
 
-	"github.com/kaynAw/yarp/config"
+	"github.com/knwgo/yarp/config"
 )
 
 func getTargetUrl(srcHostPort string, rules []config.HostRule) (*url.URL, error) {
