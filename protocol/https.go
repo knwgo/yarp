@@ -52,6 +52,7 @@ func (hp HTTPSProxy) handleClientConn(cliConn net.Conn, targetHost string) {
 	targetConn, err := net.Dial("tcp", targetHost)
 	if err != nil {
 		klog.Errorf("dial target host error: %v", err)
+		return
 	}
 	if err := pipe(cliConn, targetConn); err != nil {
 		klog.Errorf("pipe target host error: %v", err)
