@@ -34,6 +34,10 @@ bindAddr = "0.0.0.0:443"
 [[tcp]]
 bindAddr = "[::]:4396"
 target = "192.168.1.7:9527"
+
+[[udp]]
+bindAddr = "[::]:6666"
+target = "192.168.1.7:6666"
 ```
 
 ### Simple Dashboard
