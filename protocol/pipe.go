@@ -45,16 +45,20 @@ func pipeHost(src net.Conn, targetHost string) {
 
 type countingWriter struct {
 	io.Writer
-	count   *int64
-	onWrite func()
+	count       *int64
+	buffered    int64
+	bufferLimit int64
+	onWrite     func(n int64)
 }
 
 func (cw *countingWriter) Write(p []byte) (int, error) {
 	n, err := cw.Writer.Write(p)
 	if n > 0 {
 		atomic.AddInt64(cw.count, int64(n))
-		if cw.onWrite != nil {
-			cw.onWrite()
+		cw.buffered += int64(n)
+		if cw.buffered >= cw.bufferLimit && cw.onWrite != nil {
+			cw.onWrite(cw.buffered)
+			cw.buffered = 0
 		}
 	}
 	return n, err
@@ -74,13 +78,14 @@ func pipeWithStats(src net.Conn, dest net.Conn, ruleKey string) error {
 
 	countingWriterWithStats := func(writer io.Writer, count *int64, isSrcToDest bool) io.Writer {
 		return &countingWriter{
-			Writer: writer,
-			count:  count,
-			onWrite: func() {
+			Writer:      writer,
+			count:       count,
+			bufferLimit: 2 * 1024,
+			onWrite: func(n int64) {
 				if isSrcToDest {
-					GlobalStats.AddBytes(ruleKey, 0, atomic.LoadInt64(count))
+					GlobalStats.AddBytes(ruleKey, 0, n)
 				} else {
-					GlobalStats.AddBytes(ruleKey, atomic.LoadInt64(count), 0)
+					GlobalStats.AddBytes(ruleKey, n, 0)
 				}
 			},
 		}

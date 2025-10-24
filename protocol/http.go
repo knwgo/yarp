@@ -45,7 +45,7 @@ func (hp HTTPProxy) handleConn(clientConn net.Conn) {
 
 	targetHost, err := getTargetUrl(host, hp.Cfg.Rules)
 	if err != nil {
-		klog.Errorf("[http] %s get target url error: %v", host, err)
+		klog.Errorf("[http] %s form %s get target url error: %v", host, clientConn.RemoteAddr(), err)
 		_ = clientConn.Close()
 		return
 	}

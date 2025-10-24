@@ -40,7 +40,7 @@ func (hp HTTPSProxy) Start() error {
 
 		targetHost, err := getTargetUrl(sni, hp.Cfg.Rules)
 		if err != nil {
-			klog.Errorf("[https] %s get target url error: %v", sni, err)
+			klog.Errorf("[https] %s from %s get target url error: %v", sni, clientConn.RemoteAddr(), err)
 			_ = clientConn.Close()
 			continue
 		}

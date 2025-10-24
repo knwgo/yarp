@@ -9,21 +9,19 @@ import (
 	"github.com/knwgo/yarp/config"
 )
 
-type TransportProxy struct {
-	cfg     []config.IPRule
-	network string
+type TcpProxy struct {
+	cfg []config.IPRule
 }
 
-func NewTransportProxy(cfg []config.IPRule, network string) *TransportProxy {
-	return &TransportProxy{
-		cfg:     cfg,
-		network: network,
+func NewTcpProxy(cfg []config.IPRule) *TcpProxy {
+	return &TcpProxy{
+		cfg: cfg,
 	}
 }
 
-func (t TransportProxy) Start() error {
+func (t TcpProxy) Start() error {
 	for _, rule := range t.cfg {
-		ln, err := net.Listen(t.network, rule.BindAddr)
+		ln, err := net.Listen("tcp", rule.BindAddr)
 		if err != nil {
 			return err
 		}
@@ -35,7 +33,7 @@ func (t TransportProxy) Start() error {
 					klog.Errorf("failed to accept connection: %v", err)
 					continue
 				}
-				klog.Infof("[%s] new conn form %s, %s -> %s", t.network, conn.RemoteAddr(), bindAddr, target)
+				klog.Infof("[tcp] new conn form %s, %s -> %s", conn.RemoteAddr(), bindAddr, target)
 
 				go t.handleConnection(conn, target, bindAddr)
 			}
@@ -45,10 +43,10 @@ func (t TransportProxy) Start() error {
 	return nil
 }
 
-func (t TransportProxy) handleConnection(conn net.Conn, target, bindAddr string) {
-	ruleKey := fmt.Sprintf("%s:%s->%s", t.network, bindAddr, target)
+func (t TcpProxy) handleConnection(conn net.Conn, target, bindAddr string) {
+	ruleKey := fmt.Sprintf("tcp:%s->%s", bindAddr, target)
 
-	targetConn, err := net.Dial(t.network, target)
+	targetConn, err := net.Dial("tcp", target)
 	if err != nil {
 		klog.Errorf("failed to dial target: %v", err)
 		return

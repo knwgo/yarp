@@ -51,15 +51,38 @@ th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
 th { background: #eee; }
 </style>
 <script>
+// 格式化字节为 B/KB/MB/GB
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    let k = bytes / 1024;
+    if (k < 1024) return k.toFixed(2) + " KB";
+    let m = k / 1024;
+    if (m < 1024) return m.toFixed(2) + " MB";
+    return (m/1024).toFixed(2) + " GB";
+}
+
+// 格式化速率 KB/s -> KB/s 或 MB/s
+function formatRate(kbps) {
+    if (kbps < 1024) return kbps.toFixed(2) + " KB/s";
+    return (kbps/1024).toFixed(2) + " MB/s";
+}
+
 async function refresh(){
     let res = await fetch('/api/stats');
     let snapshot = await res.json();
     let data = snapshot.ruleStats;
 
-    let html = '<table><tr><th>Rule</th><th>Conn</th><th>BytesIn</th><th>BytesOut</th><th>RateIn(KB/s)</th><th>RateOut(KB/s)</th></tr>';
+    let html = '<table><tr><th>Rule</th><th>Conn</th><th>BytesIn</th><th>BytesOut</th><th>RateIn</th><th>RateOut</th></tr>';
     for(let k in data){
         let v = data[k];
-        html += '<tr><td>'+k+'</td><td>'+v.ConnCount+'</td><td>'+v.BytesIn+'</td><td>'+v.BytesOut+'</td><td>'+v.RateInKBps.toFixed(2)+'</td><td>'+v.RateOutKBps.toFixed(2)+'</td></tr>';
+        html += '<tr>'+
+                '<td>'+k+'</td>'+
+                '<td>'+v.ConnCount+'</td>'+
+                '<td>'+formatBytes(v.BytesIn)+'</td>'+
+                '<td>'+formatBytes(v.BytesOut)+'</td>'+
+                '<td>'+formatRate(v.RateInKBps)+'</td>'+
+                '<td>'+formatRate(v.RateOutKBps)+'</td>'+
+                '</tr>';
     }
     html += '</table>';
     document.getElementById('statsTable').innerHTML = html;
