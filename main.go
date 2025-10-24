@@ -35,12 +35,12 @@ func main() {
 
 	if YARPConfig.TCP != nil {
 		klog.Info("starting tcp proxy")
-		eg.Go(protocol.NewTCPProxy(*YARPConfig.TCP, "tcp").Start)
+		eg.Go(protocol.NewTransportProxy(*YARPConfig.TCP, "tcp").Start)
 	}
 
 	if YARPConfig.UDP != nil {
 		klog.Info("starting udp proxy")
-		eg.Go(protocol.NewTCPProxy(*YARPConfig.UDP, "udp").Start)
+		eg.Go(protocol.NewTransportProxy(*YARPConfig.UDP, "udp").Start)
 	}
 
 	if YARPConfig.Http != nil {

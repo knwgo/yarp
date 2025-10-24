@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"fmt"
 	"net"
 
 	"k8s.io/klog/v2"
@@ -13,7 +14,7 @@ type TransportProxy struct {
 	network string
 }
 
-func NewTCPProxy(cfg []config.IPRule, network string) *TransportProxy {
+func NewTransportProxy(cfg []config.IPRule, network string) *TransportProxy {
 	return &TransportProxy{
 		cfg:     cfg,
 		network: network,
@@ -27,7 +28,7 @@ func (t TransportProxy) Start() error {
 			return err
 		}
 
-		go func(listener net.Listener, bindAddr, target string) {
+		go func(listener net.Listener, target, bindAddr string) {
 			for {
 				conn, err := listener.Accept()
 				if err != nil {
@@ -36,22 +37,24 @@ func (t TransportProxy) Start() error {
 				}
 				klog.Infof("[%s] new conn form %s, %s -> %s", t.network, conn.RemoteAddr(), bindAddr, target)
 
-				go t.handleConnection(conn, target)
+				go t.handleConnection(conn, target, bindAddr)
 			}
-		}(ln, rule.BindAddr, rule.Target)
+		}(ln, rule.Target, rule.BindAddr)
 	}
 
 	return nil
 }
 
-func (t TransportProxy) handleConnection(conn net.Conn, target string) {
+func (t TransportProxy) handleConnection(conn net.Conn, target, bindAddr string) {
+	ruleKey := fmt.Sprintf("%s:%s->%s", t.network, bindAddr, target)
+
 	targetConn, err := net.Dial(t.network, target)
 	if err != nil {
 		klog.Errorf("failed to dial target: %v", err)
 		return
 	}
 
-	if err := pipe(conn, targetConn); err != nil {
+	if err := pipeWithStats(conn, targetConn, ruleKey); err != nil {
 		klog.Errorf("failed to pipe connection: %v", err)
 	}
 }

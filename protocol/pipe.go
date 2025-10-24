@@ -3,6 +3,10 @@ package protocol
 import (
 	"io"
 	"net"
+	"sync/atomic"
+	"time"
+
+	"k8s.io/klog/v2"
 )
 
 func pipe(src net.Conn, dest net.Conn) error {
@@ -22,4 +26,89 @@ func pipe(src net.Conn, dest net.Conn) error {
 		onClose(err)
 	}()
 	return <-errChan
+}
+
+func pipeHost(src net.Conn, targetHost string) {
+	targetConn, err := net.Dial("tcp", targetHost)
+	if err != nil {
+		klog.Errorf("dial target host error: %v", err)
+		return
+	}
+
+	_ = targetConn.SetDeadline(time.Time{})
+	_ = src.SetDeadline(time.Time{})
+
+	if err := pipe(src, targetConn); err != nil {
+		klog.Errorf("pipe target host error: %v", err)
+	}
+}
+
+type countingWriter struct {
+	io.Writer
+	count   *int64
+	onWrite func()
+}
+
+func (cw *countingWriter) Write(p []byte) (int, error) {
+	n, err := cw.Writer.Write(p)
+	if n > 0 {
+		atomic.AddInt64(cw.count, int64(n))
+		if cw.onWrite != nil {
+			cw.onWrite()
+		}
+	}
+	return n, err
+}
+
+func pipeWithStats(src net.Conn, dest net.Conn, ruleKey string) error {
+	GlobalStats.AddConn(ruleKey)
+	defer GlobalStats.RemoveConn(ruleKey)
+
+	defer func() {
+		_ = dest.Close()
+		_ = src.Close()
+	}()
+
+	var bytesSrcToDest, bytesDestToSrc int64
+	errChan := make(chan error, 2)
+
+	countingWriterWithStats := func(writer io.Writer, count *int64, isSrcToDest bool) io.Writer {
+		return &countingWriter{
+			Writer: writer,
+			count:  count,
+			onWrite: func() {
+				if isSrcToDest {
+					GlobalStats.AddBytes(ruleKey, 0, atomic.LoadInt64(count))
+				} else {
+					GlobalStats.AddBytes(ruleKey, atomic.LoadInt64(count), 0)
+				}
+			},
+		}
+	}
+
+	go func() {
+		_, err := io.Copy(countingWriterWithStats(dest, &bytesSrcToDest, true), src)
+		errChan <- err
+	}()
+	go func() {
+		_, err := io.Copy(countingWriterWithStats(src, &bytesDestToSrc, false), dest)
+		errChan <- err
+	}()
+
+	return <-errChan
+}
+
+func pipeHostWithStats(src net.Conn, targetHost, ruleKey string) {
+	targetConn, err := net.Dial("tcp", targetHost)
+	if err != nil {
+		klog.Errorf("dial target host error: %v", err)
+		return
+	}
+
+	_ = targetConn.SetDeadline(time.Time{})
+	_ = src.SetDeadline(time.Time{})
+
+	if err := pipeWithStats(src, targetConn, ruleKey); err != nil {
+		klog.Errorf("pipe target host error: %v", err)
+	}
 }
