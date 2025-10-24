@@ -21,6 +21,9 @@ bindAddr = "[::]:80"
     [[http.rules]]
     host = "*.foo.bar"
     target = "127.0.0.1:80"
+    [[http.rules]]
+    host = "yarp.example.com"
+    target = "127.0.0.1:8080"
 
 [https]
 bindAddr = "0.0.0.0:443"
@@ -32,3 +35,6 @@ bindAddr = "0.0.0.0:443"
 bindAddr = "[::]:4396"
 target = "192.168.1.7:9527"
 ```
+
+### Simple Dashboard
+open `http://127.0.0.1:8080` to get a simple dashboard
