@@ -20,125 +20,250 @@ func NewUdpProxy(cfg []config.IPRule) *UdpProxy {
 	return &UdpProxy{cfg: cfg}
 }
 
+type session struct {
+	clientAddr *net.UDPAddr
+	targetConn *net.UDPConn
+
+	writeCh chan []byte
+	closed  chan struct{}
+	closeMu sync.Mutex
+	closedF bool
+
+	lastActive atomic.Int64 // unix nano
+
+	pendingLock sync.Mutex
+	pendingIn   int64 // dest -> src
+	pendingOut  int64 // src -> dest
+}
+
+func newSession(clientAddr *net.UDPAddr, targetConn *net.UDPConn) *session {
+	s := &session{
+		clientAddr: clientAddr,
+		targetConn: targetConn,
+		writeCh:    make(chan []byte, 256),
+		closed:     make(chan struct{}),
+	}
+	s.touch()
+	return s
+}
+
+func (s *session) touch() {
+	s.lastActive.Store(time.Now().UnixNano())
+}
+
+func (s *session) isClosed() bool {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	return s.closedF
+}
+
+func (s *session) close() {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if !s.closedF {
+		s.closedF = true
+		close(s.closed)
+		_ = s.targetConn.Close()
+	}
+}
+
 func (u *UdpProxy) Start() error {
 	for _, rule := range u.cfg {
 		pc, err := net.ListenPacket("udp", rule.BindAddr)
 		if err != nil {
 			return err
 		}
-		go u.handleListener(pc, rule.Target, rule.BindAddr)
+		go startUDPListener(pc, rule.Target, rule.BindAddr)
 	}
 	return nil
 }
 
-type countingBuffer struct {
-	ruleKey string
-	inBuf   int64
-	outBuf  int64
-	limit   int64
-	mu      sync.Mutex
-}
-
-func newCountingBuffer(ruleKey string, limit int64) *countingBuffer {
-	return &countingBuffer{
-		ruleKey: ruleKey,
-		limit:   limit,
-	}
-}
-
-func (cb *countingBuffer) add(in, out int64) {
-	cb.mu.Lock()
-	cb.inBuf += in
-	cb.outBuf += out
-	if cb.inBuf >= cb.limit || cb.outBuf >= cb.limit {
-		GlobalStats.AddBytes(cb.ruleKey, cb.inBuf, cb.outBuf)
-		cb.inBuf = 0
-		cb.outBuf = 0
-	}
-	cb.mu.Unlock()
-}
-
-type activePeers struct {
-	peers map[string]time.Time
-	mu    sync.Mutex
-}
-
-func newActivePeers() *activePeers {
-	return &activePeers{
-		peers: make(map[string]time.Time),
-	}
-}
-
-func (ap *activePeers) add(addr string) {
-	ap.mu.Lock()
-	ap.peers[addr] = time.Now()
-	ap.mu.Unlock()
-}
-
-func (ap *activePeers) count(expire time.Duration) int32 {
-	ap.mu.Lock()
-	now := time.Now()
-	for k, t := range ap.peers {
-		if now.Sub(t) > expire {
-			delete(ap.peers, k)
-		}
-	}
-	cnt := int32(len(ap.peers))
-	ap.mu.Unlock()
-	return cnt
-}
-
-func (u *UdpProxy) handleListener(pc net.PacketConn, targetAddr, bindAddr string) {
-	buf := make([]byte, 64*1024)
+func startUDPListener(pc net.PacketConn, targetAddr string, bindAddr string) {
 	ruleKey := fmt.Sprintf("udp:%s->%s", bindAddr, targetAddr)
-	cb := newCountingBuffer(ruleKey, 8*1024)
-	active := newActivePeers()
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	// sessions map: clientAddr.String() -> *session
+	sessions := make(map[string]*session)
+	var sessionsMu sync.Mutex
+
+	const (
+		idleTimeout           = 90 * time.Second
+		cleanupInterval       = 30 * time.Second
+		flushInterval         = 1 * time.Second
+		pendingFlushThreshold = 16 * 1024
+	)
+
+	rs := GlobalStats.getOrCreateRule(ruleKey)
+
 	go func() {
+		ticker := time.NewTicker(flushInterval)
+		defer ticker.Stop()
 		for range ticker.C {
-			cnt := active.count(60 * time.Second)
-			GlobalStats.mu.Lock()
-			s := GlobalStats.getOrCreateRule(ruleKey)
-			atomic.StoreInt32(&s.ConnCount, cnt)
-			GlobalStats.mu.Unlock()
+			var totalIn int64
+			var totalOut int64
+			var activeCount int32
+
+			sessionsMu.Lock()
+			now := time.Now()
+			for k, s := range sessions {
+				last := time.Unix(0, s.lastActive.Load())
+				if now.Sub(last) <= idleTimeout {
+					activeCount++
+				}
+
+				s.pendingLock.Lock()
+				in := s.pendingIn
+				out := s.pendingOut
+				s.pendingIn = 0
+				s.pendingOut = 0
+				s.pendingLock.Unlock()
+
+				totalIn += in
+				totalOut += out
+
+				if s.isClosed() {
+					delete(sessions, k)
+				}
+			}
+			sessionsMu.Unlock()
+
+			if totalIn != 0 || totalOut != 0 {
+				GlobalStats.AddBytes(ruleKey, totalIn, totalOut)
+			}
+
+			atomic.StoreInt32(&rs.ConnCount, activeCount)
 		}
 	}()
 
+	go func() {
+		ticker := time.NewTicker(cleanupInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			now := time.Now()
+			sessionsMu.Lock()
+			for key, s := range sessions {
+				last := time.Unix(0, s.lastActive.Load())
+				if now.Sub(last) > idleTimeout {
+					s.pendingLock.Lock()
+					in := s.pendingIn
+					out := s.pendingOut
+					s.pendingIn = 0
+					s.pendingOut = 0
+					s.pendingLock.Unlock()
+
+					if in != 0 || out != 0 {
+						GlobalStats.AddBytes(ruleKey, in, out)
+					}
+
+					s.close()
+					delete(sessions, key)
+				}
+			}
+			sessionsMu.Unlock()
+		}
+	}()
+
+	buf := make([]byte, 64*1024)
 	for {
 		n, addr, err := pc.ReadFrom(buf)
 		if err != nil {
-			klog.Errorf("udp read error: %v", err)
+			klog.Errorf("[udp] read error on %s: %v", bindAddr, err)
 			continue
 		}
-		active.add(addr.String())
+		udpAddr, ok := addr.(*net.UDPAddr)
+		if !ok {
+			continue
+		}
 
-		go func(data []byte, n int, srcAddr net.Addr) {
-			targetConn, err := net.Dial("udp", targetAddr)
+		pkt := append([]byte(nil), buf[:n]...)
+		key := udpAddr.String()
+
+		sessionsMu.Lock()
+		sess, ok := sessions[key]
+		if !ok {
+			// Dial UDP target once for this client session
+			targetUDPAddr, err := net.ResolveUDPAddr("udp", targetAddr)
 			if err != nil {
-				klog.Errorf("udp dial target error: %v", err)
-				return
+				klog.Errorf("[udp] resolve target %s error: %v", targetAddr, err)
+				sessionsMu.Unlock()
+				continue
 			}
-			defer func() {
-				_ = targetConn.Close()
-			}()
-
-			written, err := targetConn.Write(data[:n])
+			tc, err := net.DialUDP("udp", nil, targetUDPAddr)
 			if err != nil {
-				klog.Errorf("udp write target error: %v", err)
-				return
+				klog.Errorf("[udp] dial target %s error: %v", targetAddr, err)
+				sessionsMu.Unlock()
+				continue
 			}
 
-			cb.add(int64(written), int64(n))
+			sess = newSession(udpAddr, tc)
+			sessions[key] = sess
 
-			respBuf := make([]byte, 64*1024)
-			_ = targetConn.SetReadDeadline(time.Now().Add(3 * time.Second))
-			rl, err := targetConn.Read(respBuf)
-			if err == nil && rl > 0 {
-				cb.add(int64(rl), 0)
-				_, _ = pc.WriteTo(respBuf[:rl], srcAddr)
-			}
-		}(append([]byte(nil), buf[:n]...), n, addr)
+			go func(s *session) {
+				readBuf := make([]byte, 64*1024)
+				for {
+					select {
+					case <-s.closed:
+						return
+					default:
+					}
+
+					nr, err := s.targetConn.Read(readBuf)
+					if err != nil {
+						return
+					}
+					if nr <= 0 {
+						continue
+					}
+
+					s.pendingLock.Lock()
+					s.pendingIn += int64(nr)
+					s.pendingLock.Unlock()
+
+					_, _ = pc.WriteTo(readBuf[:nr], s.clientAddr)
+					s.touch()
+				}
+			}(sess)
+
+			go func(s *session) {
+				for {
+					select {
+					case data := <-s.writeCh:
+						if data == nil {
+							return
+						}
+						w, err := s.targetConn.Write(data)
+						if err != nil {
+							return
+						}
+						// 增加 pendingOut，并在超过阈值时尽快写回 GlobalStats（避免长时间占用内存）
+						s.pendingLock.Lock()
+						s.pendingOut += int64(w)
+						inP := s.pendingIn
+						outP := s.pendingOut
+						if inP >= pendingFlushThreshold || outP >= pendingFlushThreshold {
+							s.pendingIn = 0
+							s.pendingOut = 0
+							s.pendingLock.Unlock()
+							GlobalStats.AddBytes(ruleKey, inP, outP)
+						} else {
+							s.pendingLock.Unlock()
+						}
+						s.touch()
+					case <-s.closed:
+						return
+					}
+				}
+			}(sess)
+		}
+
+		sess.touch()
+
+		select {
+		case sess.writeCh <- pkt:
+		default:
+			sess.pendingLock.Lock()
+			sess.pendingOut += int64(len(pkt))
+			sess.pendingLock.Unlock()
+		}
+		sessionsMu.Unlock()
 	}
 }
