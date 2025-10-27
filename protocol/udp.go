@@ -10,6 +10,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/knwgo/yarp/config"
+	"github.com/knwgo/yarp/stat"
 )
 
 type UdpProxy struct {
@@ -92,7 +93,7 @@ func startUDPListener(pc net.PacketConn, targetAddr string, bindAddr string) {
 		pendingFlushThreshold = 16 * 1024
 	)
 
-	rs := GlobalStats.getOrCreateRule(ruleKey)
+	rs := stat.GlobalStats.GetOrCreateRule(ruleKey)
 
 	go func() {
 		ticker := time.NewTicker(flushInterval)
@@ -127,7 +128,7 @@ func startUDPListener(pc net.PacketConn, targetAddr string, bindAddr string) {
 			sessionsMu.Unlock()
 
 			if totalIn != 0 || totalOut != 0 {
-				GlobalStats.AddBytes(ruleKey, totalIn, totalOut)
+				stat.GlobalStats.AddBytes(ruleKey, totalIn, totalOut)
 			}
 
 			atomic.StoreInt32(&rs.ConnCount, activeCount)
@@ -151,7 +152,7 @@ func startUDPListener(pc net.PacketConn, targetAddr string, bindAddr string) {
 					s.pendingLock.Unlock()
 
 					if in != 0 || out != 0 {
-						GlobalStats.AddBytes(ruleKey, in, out)
+						stat.GlobalStats.AddBytes(ruleKey, in, out)
 					}
 
 					s.close()
@@ -243,7 +244,7 @@ func startUDPListener(pc net.PacketConn, targetAddr string, bindAddr string) {
 							s.pendingIn = 0
 							s.pendingOut = 0
 							s.pendingLock.Unlock()
-							GlobalStats.AddBytes(ruleKey, inP, outP)
+							stat.GlobalStats.AddBytes(ruleKey, inP, outP)
 						} else {
 							s.pendingLock.Unlock()
 						}

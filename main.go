@@ -9,6 +9,7 @@ import (
 
 	"github.com/knwgo/yarp/config"
 	"github.com/knwgo/yarp/protocol"
+	"github.com/knwgo/yarp/stat"
 )
 
 func main() {
@@ -52,6 +53,8 @@ func main() {
 		klog.Info("starting https proxy")
 		eg.Go(protocol.HTTPSProxy{Cfg: *YARPConfig.Https}.Start)
 	}
+
+	stat.StartDashboard(YARPConfig.Dashboard)
 
 	klog.Error(eg.Wait())
 }

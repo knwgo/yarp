@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"k8s.io/klog/v2"
+
+	"github.com/knwgo/yarp/stat"
 )
 
 func pipe(src net.Conn, dest net.Conn) error {
@@ -65,8 +67,8 @@ func (cw *countingWriter) Write(p []byte) (int, error) {
 }
 
 func pipeWithStats(src net.Conn, dest net.Conn, ruleKey string) error {
-	GlobalStats.AddConn(ruleKey)
-	defer GlobalStats.RemoveConn(ruleKey)
+	stat.GlobalStats.AddConn(ruleKey)
+	defer stat.GlobalStats.RemoveConn(ruleKey)
 
 	defer func() {
 		_ = dest.Close()
@@ -83,9 +85,9 @@ func pipeWithStats(src net.Conn, dest net.Conn, ruleKey string) error {
 			bufferLimit: 2 * 1024,
 			onWrite: func(n int64) {
 				if isSrcToDest {
-					GlobalStats.AddBytes(ruleKey, 0, n)
+					stat.GlobalStats.AddBytes(ruleKey, 0, n)
 				} else {
-					GlobalStats.AddBytes(ruleKey, n, 0)
+					stat.GlobalStats.AddBytes(ruleKey, n, 0)
 				}
 			},
 		}

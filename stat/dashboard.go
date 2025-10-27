@@ -1,33 +1,56 @@
-package protocol
+package stat
 
 import (
 	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
+
+	"github.com/knwgo/yarp/config"
 )
 
-func init() {
-	StartDashboard("127.0.0.1:8080")
-}
+func StartDashboard(dc *config.Dashboard) {
+	if dc == nil {
+		dc = &config.Dashboard{
+			BindAddr:     "127.0.0.1",
+			HttpUser:     "",
+			HttpPassword: "",
+		}
+	}
 
-func StartDashboard(addr string) {
-	http.HandleFunc("/", dashboardHandler)
+	hf := dashboardHandler
+	if dc.HttpPassword != "" && dc.HttpUser != "" {
+		hf = basicAuth(dashboardHandler, dc.HttpUser, dc.HttpPassword)
+	}
+
+	http.HandleFunc("/", hf)
 	http.HandleFunc("/api/stats", statsAPI)
 	go func() {
-		fmt.Printf("[dashboard] running at http://%s\n", addr)
-		_ = http.ListenAndServe(addr, nil)
+		fmt.Printf("[dashboard] running at http://%s\n", dc.BindAddr)
+		_ = http.ListenAndServe(dc.BindAddr, nil)
 	}()
 }
 
-// /api/stats 返回 Snapshot JSON
-func statsAPI(w http.ResponseWriter, r *http.Request) {
+func basicAuth(next http.HandlerFunc, user, pwd string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		basicUser, basicPass, ok := r.BasicAuth()
+		if !ok || basicUser != user || basicPass != pwd {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte("Unauthorized\n"))
+			return
+		}
+		next(w, r)
+	}
+}
+
+func statsAPI(w http.ResponseWriter, _ *http.Request) {
 	snapshot := GlobalStats.Snapshot()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(snapshot)
 }
 
-func dashboardHandler(w http.ResponseWriter, r *http.Request) {
+func dashboardHandler(w http.ResponseWriter, _ *http.Request) {
 	tpl := `
 <!DOCTYPE html>
 <html>
@@ -51,7 +74,6 @@ th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
 th { background: #eee; }
 </style>
 <script>
-// 格式化字节为 B/KB/MB/GB
 function formatBytes(bytes) {
     if (bytes < 1024) return bytes + " B";
     let k = bytes / 1024;
@@ -61,7 +83,6 @@ function formatBytes(bytes) {
     return (m/1024).toFixed(2) + " GB";
 }
 
-// 格式化速率 KB/s -> KB/s 或 MB/s
 function formatRate(kbps) {
     if (kbps < 1024) return kbps.toFixed(2) + " KB/s";
     return (kbps/1024).toFixed(2) + " MB/s";

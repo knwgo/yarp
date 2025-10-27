@@ -1,4 +1,4 @@
-package protocol
+package stat
 
 import (
 	"sync"
@@ -32,7 +32,7 @@ var GlobalStats = &StatsManager{
 	stats: make(map[string]*RuleStats),
 }
 
-func (m *StatsManager) getOrCreateRule(key string) *RuleStats {
+func (m *StatsManager) GetOrCreateRule(key string) *RuleStats {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if s, ok := m.stats[key]; ok {
@@ -44,17 +44,17 @@ func (m *StatsManager) getOrCreateRule(key string) *RuleStats {
 }
 
 func (m *StatsManager) AddConn(key string) {
-	s := m.getOrCreateRule(key)
+	s := m.GetOrCreateRule(key)
 	atomic.AddInt32(&s.ConnCount, 1)
 }
 
 func (m *StatsManager) RemoveConn(key string) {
-	s := m.getOrCreateRule(key)
+	s := m.GetOrCreateRule(key)
 	atomic.AddInt32(&s.ConnCount, -1)
 }
 
 func (m *StatsManager) AddBytes(key string, in, out int64) {
-	s := m.getOrCreateRule(key)
+	s := m.GetOrCreateRule(key)
 	atomic.AddUint64(&s.BytesIn, uint64(in))
 	atomic.AddUint64(&s.BytesOut, uint64(out))
 }

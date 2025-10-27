@@ -6,6 +6,8 @@ type YARPConfig struct {
 
 	Http  *Http `mapstructure:"http"`
 	Https *Http `mapstructure:"https"`
+
+	Dashboard *Dashboard `mapstructure:"dashboard"`
 }
 
 type IPRule struct {
@@ -21,4 +23,10 @@ type Http struct {
 type HostRule struct {
 	Host   string `mapstructure:"host"`
 	Target string `mapstructure:"target"`
+}
+
+type Dashboard struct {
+	BindAddr     string `mapstructure:"bindAddr"`
+	HttpUser     string `mapstructure:"httpUser"`
+	HttpPassword string `mapstructure:"httpPassword"`
 }
