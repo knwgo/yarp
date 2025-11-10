@@ -60,56 +60,98 @@ func dashboardHandler(w http.ResponseWriter, _ *http.Request) {
 <style>
 body { font-family: sans-serif; margin: 40px; background: #fafafa; position: relative; }
 #lastUpdated {
-    position: fixed;
-    top: 10px;
-    right: 20px;
-    background: #eee;
-    padding: 5px 10px;
-    border-radius: 4px;
-    font-size: 14px;
-    box-shadow: 0 0 3px rgba(0,0,0,0.2);
+	position: fixed;
+	top: 10px;
+	right: 20px;
+	background: #eee;
+	padding: 5px 10px;
+	border-radius: 4px;
+	font-size: 14px;
+	box-shadow: 0 0 3px rgba(0,0,0,0.2);
 }
 table { border-collapse: collapse; width: 100%; background: white; margin-top: 50px; }
 th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-th { background: #eee; }
+th.sortable { background: #eee; cursor: pointer; user-select: none; }
+th.sortable:hover { background: #ddd; }
+th.sorted-asc::after { content: " ↑"; }
+th.sorted-desc::after { content: " ↓"; }
 </style>
 <script>
+let currentSort = { key: null, asc: true };
+
 function formatBytes(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    let k = bytes / 1024;
-    if (k < 1024) return k.toFixed(2) + " KB";
-    let m = k / 1024;
-    if (m < 1024) return m.toFixed(2) + " MB";
-    return (m/1024).toFixed(2) + " GB";
+	const units = ['B','KB','MB','GB','TB'];
+	let i = 0;
+	let num = bytes;
+	while (num >= 1024 && i < units.length - 1) {
+		num /= 1024;
+		i++;
+	}
+	return num.toFixed(2) + ' ' + units[i];
 }
 
-function formatRate(kbps) {
-    if (kbps < 1024) return kbps.toFixed(2) + " KB/s";
-    return (kbps/1024).toFixed(2) + " MB/s";
+async function refresh() {
+	let res = await fetch('/api/stats');
+	let snapshot = await res.json();
+	let data = Object.entries(snapshot.ruleStats).map(([rule, v]) => ({ rule, ...v }));
+
+	// 排序逻辑
+	if (currentSort.key) {
+		data.sort((a, b) => {
+			let av = a[currentSort.key];
+			let bv = b[currentSort.key];
+			if (typeof av === 'string') av = av.toLowerCase();
+			if (typeof bv === 'string') bv = bv.toLowerCase();
+			if (av < bv) return currentSort.asc ? -1 : 1;
+			if (av > bv) return currentSort.asc ? 1 : -1;
+			return 0;
+		});
+	}
+
+	let html = '<table><tr>' +
+		'<th class="sortable" data-key="rule" onclick="sortBy(this)">Rule</th>' +
+		'<th class="sortable" data-key="ConnCount" onclick="sortBy(this)">Conn</th>' +
+		'<th class="sortable" data-key="BytesIn" onclick="sortBy(this)">BytesIn</th>' +
+		'<th class="sortable" data-key="BytesOut" onclick="sortBy(this)">BytesOut</th>' +
+		'<th class="sortable" data-key="RateInKBps" onclick="sortBy(this)">RateIn(KB/s)</th>' +
+		'<th class="sortable" data-key="RateOutKBps" onclick="sortBy(this)">RateOut(KB/s)</th>' +
+		'</tr>';
+
+	for (let v of data) {
+		html += '<tr>' +
+			'<td>' + v.rule + '</td>' +
+			'<td>' + v.ConnCount + '</td>' +
+			'<td>' + formatBytes(v.BytesIn) + '</td>' +
+			'<td>' + formatBytes(v.BytesOut) + '</td>' +
+			'<td>' + v.RateInKBps.toFixed(2) + '</td>' +
+			'<td>' + v.RateOutKBps.toFixed(2) + '</td>' +
+			'</tr>';
+	}
+
+	html += '</table>';
+	document.getElementById('statsTable').innerHTML = html;
+
+	// 设置列头箭头状态
+	for (let th of document.querySelectorAll('th.sortable')) {
+		th.classList.remove('sorted-asc', 'sorted-desc');
+		if (th.dataset.key === currentSort.key) {
+			th.classList.add(currentSort.asc ? 'sorted-asc' : 'sorted-desc');
+		}
+	}
+
+	let t = new Date(snapshot.lastUpdateTime);
+	document.getElementById('lastUpdated').innerText = 'Last Updated: ' + t.toLocaleString();
 }
 
-async function refresh(){
-    let res = await fetch('/api/stats');
-    let snapshot = await res.json();
-    let data = snapshot.ruleStats;
-
-    let html = '<table><tr><th>Rule</th><th>Conn</th><th>BytesIn</th><th>BytesOut</th><th>RateIn</th><th>RateOut</th></tr>';
-    for(let k in data){
-        let v = data[k];
-        html += '<tr>'+
-                '<td>'+k+'</td>'+
-                '<td>'+v.ConnCount+'</td>'+
-                '<td>'+formatBytes(v.BytesIn)+'</td>'+
-                '<td>'+formatBytes(v.BytesOut)+'</td>'+
-                '<td>'+formatRate(v.RateInKBps)+'</td>'+
-                '<td>'+formatRate(v.RateOutKBps)+'</td>'+
-                '</tr>';
-    }
-    html += '</table>';
-    document.getElementById('statsTable').innerHTML = html;
-
-    let t = new Date(snapshot.lastUpdateTime);
-    document.getElementById('lastUpdated').innerText = 'Last Updated: ' + t.toLocaleString();
+function sortBy(th) {
+	const key = th.dataset.key;
+	if (currentSort.key === key) {
+		currentSort.asc = !currentSort.asc;
+	} else {
+		currentSort.key = key;
+		currentSort.asc = true;
+	}
+	refresh();
 }
 
 setInterval(refresh, 1000);
