@@ -7,33 +7,47 @@ import (
 	"net"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 
 	"github.com/knwgo/yarp/config"
 )
 
 type HTTPProxy struct {
-	Cfg config.Http
+	Cfg []config.Http
 }
 
 func (hp HTTPProxy) Start() error {
-	ln, err := net.Listen("tcp", hp.Cfg.BindAddr)
-	if err != nil {
-		return err
-	}
-
-	for {
-		clientConn, err := ln.Accept()
+	hf := func(ba string, rules []config.HostRule) error {
+		ln, err := net.Listen("tcp", ba)
 		if err != nil {
-			klog.Errorf("failed to accept client connection: %v", err)
-			continue
+			return err
 		}
 
-		go hp.handleConn(clientConn)
+		for {
+			clientConn, err := ln.Accept()
+			if err != nil {
+				klog.Errorf("failed to accept client connection: %v", err)
+				continue
+			}
+
+			go hp.handleConn(clientConn, rules)
+		}
 	}
+
+	eg := errgroup.Group{}
+
+	for _, ch := range hp.Cfg {
+		ch := ch
+		eg.Go(func() error {
+			return hf(ch.BindAddr, ch.Rules)
+		})
+	}
+
+	return eg.Wait()
 }
 
-func (hp HTTPProxy) handleConn(clientConn net.Conn) {
+func (hp HTTPProxy) handleConn(clientConn net.Conn, rules []config.HostRule) {
 	bc := newBufConn(clientConn, 8192)
 
 	host, err := getHTTPHost(bc)
@@ -43,7 +57,7 @@ func (hp HTTPProxy) handleConn(clientConn net.Conn) {
 		return
 	}
 
-	targetHost, err := getTargetUrl(host, hp.Cfg.Rules)
+	targetHost, err := getTargetUrl(host, rules)
 	if err != nil {
 		klog.Errorf("[http] %s form %s get target url error: %v", host, clientConn.RemoteAddr(), err)
 		_ = clientConn.Close()

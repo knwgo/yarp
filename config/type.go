@@ -4,8 +4,8 @@ type YARPConfig struct {
 	TCP *[]IPRule `mapstructure:"tcp"`
 	UDP *[]IPRule `mapstructure:"udp"`
 
-	Http  *Http `mapstructure:"http"`
-	Https *Http `mapstructure:"https"`
+	Http  *[]Http `mapstructure:"http"`
+	Https *[]Http `mapstructure:"https"`
 
 	Dashboard *Dashboard `mapstructure:"dashboard"`
 }

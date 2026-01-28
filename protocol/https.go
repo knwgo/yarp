@@ -9,47 +9,61 @@ import (
 	"net"
 	"time"
 
+	"golang.org/x/sync/errgroup"
 	"k8s.io/klog/v2"
 
 	"github.com/knwgo/yarp/config"
 )
 
 type HTTPSProxy struct {
-	Cfg config.Http
+	Cfg []config.Http
 }
 
 func (hp HTTPSProxy) Start() error {
-	ln, err := net.Listen("tcp", hp.Cfg.BindAddr)
-	if err != nil {
-		return err
+	hf := func(ba string, rules []config.HostRule) error {
+		ln, err := net.Listen("tcp", ba)
+		if err != nil {
+			return err
+		}
+
+		for {
+			clientConn, err := ln.Accept()
+			if err != nil {
+				klog.Errorf("failed to accept client connection: %v", err)
+				continue
+			}
+
+			copyConn, sni, err := getHTTPSHostname(clientConn)
+			if err != nil {
+				klog.Errorf("get https hostname error: %v", err)
+				_ = clientConn.Close()
+				continue
+			}
+
+			targetHost, err := getTargetUrl(sni, rules)
+			if err != nil {
+				klog.Errorf("[https] %s from %s get target url error: %v", sni, clientConn.RemoteAddr(), err)
+				_ = clientConn.Close()
+				continue
+			}
+
+			klog.Infof("[https] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), sni, targetHost.Host)
+
+			ruleKey := fmt.Sprintf("https:%s->%s", sni, targetHost.Host)
+			go pipeHostWithStats(copyConn, targetHost.Host, ruleKey)
+		}
 	}
 
-	for {
-		clientConn, err := ln.Accept()
-		if err != nil {
-			klog.Errorf("failed to accept client connection: %v", err)
-			continue
-		}
+	eg := errgroup.Group{}
 
-		copyConn, sni, err := getHTTPSHostname(clientConn)
-		if err != nil {
-			klog.Errorf("get https hostname error: %v", err)
-			_ = clientConn.Close()
-			continue
-		}
-
-		targetHost, err := getTargetUrl(sni, hp.Cfg.Rules)
-		if err != nil {
-			klog.Errorf("[https] %s from %s get target url error: %v", sni, clientConn.RemoteAddr(), err)
-			_ = clientConn.Close()
-			continue
-		}
-
-		klog.Infof("[https] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), sni, targetHost.Host)
-
-		ruleKey := fmt.Sprintf("https:%s->%s", sni, targetHost.Host)
-		go pipeHostWithStats(copyConn, targetHost.Host, ruleKey)
+	for _, ch := range hp.Cfg {
+		ch := ch
+		eg.Go(func() error {
+			return hf(ch.BindAddr, ch.Rules)
+		})
 	}
+
+	return eg.Wait()
 }
 
 func getHTTPSHostname(conn net.Conn) (*bufConn, string, error) {
