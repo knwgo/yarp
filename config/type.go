@@ -23,6 +23,7 @@ type Http struct {
 type HostRule struct {
 	Host   string `mapstructure:"host"`
 	Target string `mapstructure:"target"`
+	Ws     *bool  `mapstructure:"ws"`
 }
 
 type Dashboard struct {

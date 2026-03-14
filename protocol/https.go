@@ -40,17 +40,17 @@ func (hp HTTPSProxy) Start() error {
 				continue
 			}
 
-			targetHost, err := getTargetUrl(sni, rules)
+			targetInfo, err := getTargetUrl(sni, rules)
 			if err != nil {
 				klog.Errorf("[https] %s from %s get target url error: %v", sni, clientConn.RemoteAddr(), err)
 				_ = clientConn.Close()
 				continue
 			}
 
-			klog.Infof("[https] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), sni, targetHost.Host)
+			klog.Infof("[https] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), sni, targetInfo.url.Host)
 
-			ruleKey := fmt.Sprintf("https:%s->%s", sni, targetHost.Host)
-			go pipeHostWithStats(copyConn, targetHost.Host, ruleKey)
+			ruleKey := fmt.Sprintf("https:%s->%s", sni, targetInfo.url.Host)
+			go pipeHostWithStats(copyConn, targetInfo.url.Host, ruleKey)
 		}
 	}
 

@@ -11,7 +11,12 @@ import (
 	"github.com/knwgo/yarp/config"
 )
 
-func getTargetUrl(srcHostPort string, rules []config.HostRule) (*url.URL, error) {
+type targetInfo struct {
+	url      *url.URL
+	wsEnabled bool
+}
+
+func getTargetUrl(srcHostPort string, rules []config.HostRule) (*targetInfo, error) {
 	var host string
 	var err error
 
@@ -21,6 +26,7 @@ func getTargetUrl(srcHostPort string, rules []config.HostRule) (*url.URL, error)
 	}
 
 	var target string
+	var wsEnabled bool
 
 	for _, rule := range rules {
 		if len(rule.Host) == 0 || len(rule.Target) == 0 {
@@ -34,11 +40,13 @@ func getTargetUrl(srcHostPort string, rules []config.HostRule) (*url.URL, error)
 
 			if strings.HasSuffix(host, rule.Host[1:]) {
 				target = rule.Target
+				wsEnabled = rule.Ws != nil && *rule.Ws
 				break
 			}
 		} else {
 			if host == rule.Host {
 				target = rule.Target
+				wsEnabled = rule.Ws != nil && *rule.Ws
 				break
 			}
 		}
@@ -48,5 +56,5 @@ func getTargetUrl(srcHostPort string, rules []config.HostRule) (*url.URL, error)
 		return nil, errors.New("no host found")
 	}
 
-	return &url.URL{Host: target}, nil
+	return &targetInfo{url: &url.URL{Host: target}, wsEnabled: wsEnabled}, nil
 }

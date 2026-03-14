@@ -50,27 +50,74 @@ func (hp HTTPProxy) Start() error {
 func (hp HTTPProxy) handleConn(clientConn net.Conn, rules []config.HostRule) {
 	bc := newBufConn(clientConn, 8192)
 
-	host, err := getHTTPHost(bc)
+	data, err := getHTTPHeaders(bc)
 	if err != nil {
 		klog.Errorf("get http host error: %v", err)
 		_ = clientConn.Close()
 		return
 	}
 
-	targetHost, err := getTargetUrl(host, rules)
+	host := parseHTTPHost(data)
+	if host == "" {
+		klog.Errorf("[http] no host header found")
+		_ = clientConn.Close()
+		return
+	}
+
+	targetInfo, err := getTargetUrl(host, rules)
 	if err != nil {
 		klog.Errorf("[http] %s form %s get target url error: %v", host, clientConn.RemoteAddr(), err)
 		_ = clientConn.Close()
 		return
 	}
 
-	klog.Infof("[http] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), host, targetHost)
+	targetHost := targetInfo.url.Host
+	wsEnabled := targetInfo.wsEnabled
+	ruleKey := fmt.Sprintf("http:%s->%s", host, targetHost)
 
-	ruleKey := fmt.Sprintf("http:%s->%s", host, targetHost.Host)
-	go pipeHostWithStats(bc, targetHost.Host, ruleKey)
+	// Check if WebSocket upgrade is requested
+	if wsEnabled && isWebSocketRequest(data) {
+		klog.Infof("[ws] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), host, targetHost)
+		bc.Unread(data)
+		go handleWsConnection(bc, targetHost, ruleKey)
+		return
+	}
+
+	klog.Infof("[http] new conn from: %s, %s -> %s", clientConn.RemoteAddr(), host, targetHost)
+	bc.Unread(data)
+	go pipeHostWithStats(bc, targetHost, ruleKey)
 }
 
 func getHTTPHost(conn *bufConn) (string, error) {
+	data, err := getHTTPHeaders(conn)
+	if err != nil {
+		return "", err
+	}
+
+	firstLineEnd := bytes.Index(data, []byte("\r\n"))
+	if firstLineEnd == -1 {
+		return "", fmt.Errorf("invalid http request: no CRLF")
+	}
+	firstLine := data[:firstLineEnd]
+
+	fields := bytes.Split(firstLine, []byte(" "))
+	if len(fields) >= 2 && bytes.EqualFold(fields[0], []byte("CONNECT")) {
+		target := string(fields[1])
+		conn.Unread(data)
+		return target, nil
+	}
+
+	host := parseHTTPHost(data)
+	if host == "" {
+		conn.Unread(data)
+		return "", fmt.Errorf("no host header found")
+	}
+
+	conn.Unread(data)
+	return host, nil
+}
+
+func getHTTPHeaders(conn *bufConn) ([]byte, error) {
 	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	defer func() {
 		_ = conn.SetReadDeadline(time.Time{})
@@ -94,38 +141,16 @@ func getHTTPHost(conn *bufConn) (string, error) {
 			if err == io.EOF && headerBuf.Len() > 0 {
 				break
 			}
-			return "", fmt.Errorf("read http header error: %v", err)
+			return nil, fmt.Errorf("read http header error: %v", err)
 		}
 
 		// 128KB
 		if headerBuf.Len() > 128*1024 {
-			return "", fmt.Errorf("header too large")
+			return nil, fmt.Errorf("header too large")
 		}
 	}
 
-	data := headerBuf.Bytes()
-
-	firstLineEnd := bytes.Index(data, []byte("\r\n"))
-	if firstLineEnd == -1 {
-		return "", fmt.Errorf("invalid http request: no CRLF")
-	}
-	firstLine := data[:firstLineEnd]
-
-	fields := bytes.Split(firstLine, []byte(" "))
-	if len(fields) >= 2 && bytes.EqualFold(fields[0], []byte("CONNECT")) {
-		target := string(fields[1])
-		conn.Unread(data)
-		return target, nil
-	}
-
-	host := parseHTTPHost(data)
-	if host == "" {
-		conn.Unread(data)
-		return "", fmt.Errorf("no host header found")
-	}
-
-	conn.Unread(data)
-	return host, nil
+	return headerBuf.Bytes(), nil
 }
 
 func parseHTTPHost(b []byte) string {
